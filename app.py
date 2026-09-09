@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 from fpdf import FPDF
 import json
 import os
@@ -10,7 +10,6 @@ from datetime import datetime
 st.set_page_config(page_title="SOAP Asistanı Pro", page_icon="🩺", layout="wide")
 
 # --- HAFIZA (SESSION STATE) AYARLARI ---
-# Sayfa yenilense bile verilerin kaybolmaması için hafıza oluşturuyoruz
 if "rapor_verisi" not in st.session_state:
     st.session_state.rapor_verisi = None
 if "tarih_damgasi" not in st.session_state:
@@ -21,12 +20,7 @@ def pdf_olustur(veri, tarih):
     pdf = FPDF()
     pdf.add_page()
 
-    # Türkçe karakter destekli standart font kullanımı
-    pdf.add_font("Arial", "", "arial.ttf", uni=True) 
-    # Not: Replit'te arial.ttf yoksa standart helvetica kullanır, 
-    # basitlik için yerleşik fontu Türkçe karakterleri düzcelterek kullanıyoruz.
     pdf.set_font("helvetica", size=16, style="B")
-
     pdf.cell(200, 10, txt="TIBBI DEGERLENDIRME RAPORU (SOAP)", ln=True, align='C')
     pdf.set_font("helvetica", size=10)
     pdf.cell(200, 10, txt=f"Tarih: {tarih}", ln=True, align='C')
@@ -41,7 +35,6 @@ def pdf_olustur(veri, tarih):
     pdf.cell(200, 10, txt="O - OBJEKTIF (Yasamsal Bulgular & Muayene)", ln=True)
     pdf.set_font("helvetica", size=11)
 
-    # Vitals PDF kısmı
     vitals = veri['Vitals']
     v_metin = ""
     for anahtar, deger in vitals.items():
@@ -59,7 +52,6 @@ def pdf_olustur(veri, tarih):
     pdf.set_font("helvetica", size=11)
     pdf.multi_cell(0, 8, txt=f"Plan: {veri['P']['plan']}")
 
-    # PDF'i geçici dosyaya kaydet
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     pdf.output(temp_pdf.name)
     return temp_pdf.name
@@ -67,7 +59,6 @@ def pdf_olustur(veri, tarih):
 # --- ARAYÜZ TASARIMI ---
 st.title("🎙️ Akıllı SOAP Asistanı")
 
-# Üst Butonlar
 col1, col2 = st.columns([1, 4])
 with col1:
     if st.button("➕ Yeni Hasta Kaydı Oluştur", use_container_width=True):
@@ -76,33 +67,31 @@ with col1:
         st.rerun()
 
 with col2:
-    api_key = st.text_input("Google Gemini API Anahtarı:", type="password", placeholder="AQ...")
+    api_key = st.text_input("Google Gemini API Anahtarı:", type="password", placeholder="AIzaSy...")
 
 st.divider()
 
-# Tarih Damgası
 if st.session_state.tarih_damgasi:
     st.info(f"📅 Kayıt Zamanı: {st.session_state.tarih_damgasi}")
 
-# Ses Kayıt Modülü (Streamlit yerleşik özelliği)
 st.write("### 🎤 Yeni Ses Kaydı veya Ekleme Yap")
 ses_dosyasi = st.audio_input("Konuşmak için mikrofona tıklayın:")
 
 if ses_dosyasi and api_key:
     if st.button("Sesi Analiz Et ve Formu Doldur", type="primary"):
         try:
-            genai.configure(api_key=api_key)
+            # YENİ SDK: google-genai -> Client nesnesi
+            client = genai.Client(api_key=api_key)
             st.session_state.tarih_damgasi = datetime.now().strftime("%d %B %Y - %H:%M")
 
             with st.spinner("Yapay zeka sesinizi analiz edip formu dolduruyor..."):
-                # Sesi geçici dosyaya kaydet
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
                     tmp_file.write(ses_dosyasi.getvalue())
                     tmp_file_path = tmp_file.name
 
-                audio_file = genai.upload_file(path=tmp_file_path)
+                # YENİ SDK: dosya yükleme
+                audio_file = client.files.upload(file=tmp_file_path)
 
-                # Zekadan JSON formatında yapılandırılmış veri istiyoruz
                 prompt = """
                 Aşağıdaki doktor ses kaydını dinle. Duyduğun bilgileri SOAP formatında aşağıdaki JSON şablonuna tam uyacak şekilde çıkar.
                 Eğer bir bilgi geçmiyorsa değerine "Belirtilmedi" yaz. Yaşamsal bulgular (Vitals) için sayısal değerleri çıkar.
@@ -124,15 +113,18 @@ if ses_dosyasi and api_key:
                 Sadece bu JSON'ı döndür, başka açıklama yazma.
                 """
 
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                response = model.generate_content([prompt, audio_file])
+                # YENİ SDK: model çağrısı - "gemini-flash-latest" alias'ı,
+                # Google modeli deprecate ettiğinde otomatik olarak güncel modele işaret eder
+                response = client.models.generate_content(
+                    model="gemini-flash-latest",
+                    contents=[prompt, audio_file],
+                )
 
-                # JSON metnini temizle ve parse et
                 json_metin = response.text.replace("```json", "").replace("```", "").strip()
                 st.session_state.rapor_verisi = json.loads(json_metin)
 
                 os.remove(tmp_file_path)
-                st.rerun() # Sayfayı güncel formla yenile
+                st.rerun()
 
         except Exception as e:
             st.error(f"Bir hata oluştu: {e}")
@@ -142,16 +134,13 @@ if st.session_state.rapor_verisi:
     veri = st.session_state.rapor_verisi
     st.markdown("## 📋 Yapılandırılmış SOAP Raporu")
 
-    # S - Subjektif
     st.markdown("### S - Subjektif")
     st.text_area("Ana Şikayet", veri['S']['sikayet'], disabled=True)
     st.text_area("Hastalık Öyküsü", veri['S']['oyku'], disabled=True)
     st.text_area("Özgeçmiş & Alerjiler", veri['S']['ozgecmis'], disabled=True)
 
-    # O - Objektif & Vitals
     st.markdown("### O - Objektif (Yaşamsal Bulgular)")
 
-    # Renk algoritması kutuları
     vcols = st.columns(4)
     vital_isimleri = ["ates", "nabiz", "tansiyon", "solunum"]
     vital_basliklari = ["Ateş (°C)", "Nabız (bpm)", "Tansiyon", "Solunum"]
@@ -160,41 +149,37 @@ if st.session_state.rapor_verisi:
         deger = veri['Vitals'][isim]['deger']
         durum = veri['Vitals'][isim]['durum']
 
-        # Senin istediğin renk mantığı!
         if deger is None or deger == "Belirtilmedi":
-            bg_color = "#e0e0e0" # Açık Gri
+            bg_color = "#e0e0e0"
             text = "BELİRTİLMEDİ"
         elif durum == 0:
-            bg_color = "#d4edda" # Yeşil (Normal)
+            bg_color = "#d4edda"
             text = str(deger)
         elif durum == 1:
-            bg_color = "#ffcccc" # Açık Kırmızı
+            bg_color = "#ffcccc"
             text = str(deger)
         elif durum == 2:
-            bg_color = "#ff6666" # Orta Kırmızı
+            bg_color = "#ff6666"
             text = str(deger)
         else:
-            bg_color = "#cc0000" # Koyu Kırmızı (Riskli)
+            bg_color = "#cc0000"
             text = str(deger)
 
         with vcols[i]:
             st.markdown(
                 f"<div style='background-color: {bg_color}; padding: 15px; border-radius: 10px; text-align: center; color: {'white' if durum >=3 else 'black'};'>"
-                f"<b>{baslik}</b><br><span style='font-size: 20px;'>{text}</span></div>", 
+                f"<b>{baslik}</b><br><span style='font-size: 20px;'>{text}</span></div>",
                 unsafe_allow_html=True
             )
 
     st.text_area("Fizik Muayene", veri['O']['fizik_muayene'], disabled=True)
 
-    # A - Değerlendirme
     st.markdown("### A - Değerlendirme")
     st.text_input("Ön Tanı / Ayırıcı Tanı", veri['A']['on_tani'], disabled=True)
 
-    # P - Plan
     st.markdown("### P - Plan")
     st.text_area("Tetkik ve Tedavi Planı", veri['P']['plan'], disabled=True)
 
-    # --- PDF İNDİRME BUTONU ---
     st.markdown("---")
     pdf_yolu = pdf_olustur(veri, st.session_state.tarih_damgasi)
     with open(pdf_yolu, "rb") as pdf_dosyasi:
