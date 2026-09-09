@@ -76,7 +76,7 @@ with col1:
         st.rerun()
 
 with col2:
-    api_key = st.text_input("Google Gemini API Anahtarı:", type="password", placeholder="AIzaSy...")
+    api_key = st.text_input("Google Gemini API Anahtarı:", type="password", placeholder="AQ...")
 
 st.divider()
 
